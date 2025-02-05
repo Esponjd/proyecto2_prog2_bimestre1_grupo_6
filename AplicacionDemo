@@ -1,0 +1,2027 @@
+import com.itextpdf.text.BaseColor;
+import com.itextpdf.text.Document;
+import com.itextpdf.text.DocumentException;
+import com.itextpdf.text.Element;
+import com.itextpdf.text.Paragraph;
+import com.itextpdf.text.Phrase;
+import com.itextpdf.text.pdf.ColumnText;
+import com.itextpdf.text.pdf.PdfContentByte;
+import com.itextpdf.text.pdf.PdfWriter;
+import javax.swing.*;
+import javax.swing.border.TitledBorder;
+import java.awt.*;
+import java.awt.event.*;
+import java.io.*;
+import java.util.*;
+import java.util.List;
+import com.itextpdf.text.PageSize;
+import com.itextpdf.text.pdf.PdfPCell;
+import com.itextpdf.text.pdf.PdfPTable;
+import com.itextpdf.text.Font.FontFamily;
+import com.itextpdf.text.Font;
+import java.io.FileOutputStream;
+import java.util.Date;
+import java.awt.font.*;
+
+public class AplicacionDemo extends JFrame {
+	// Mapa de usuarios (clave: usuario, valor: contraseña)
+    private Map<String, String> usuarios = new HashMap<>();
+    // Mapa de instituciones y sus transacciones permitidas
+    private final Map<String, Set<String>> instituciones = new HashMap<>();
+    // Saldo en caja (para actualizar según transacciones)
+    private double saldoCaja = 0.0;
+    
+    // Panel principal con CardLayout para cambiar entre pantallas
+    private JPanel mainPanel;
+    // Nombres de tarjetas para cada pantalla
+    private final String LOGIN = "login";
+    private final String MENU_INICIAL = "menuInicial";
+    private final String TRANSACCIONAL = "transaccional";
+    private final String PRESTAMOS = "prestamos";
+    
+    // Paneles de las diferentes pantallas
+    private JPanel loginPanel, menuInicialPanel, transaccionalPanel, prestamosPanel;
+    
+    // Panel para el menú vertical del módulo transaccional
+    private JPanel menuVerticalPanel;
+    // Panel derecho (donde se mostrarán los formularios de transacciones)
+    private JPanel transaccionCards;
+    // CardLayout para cambiar de formulario en el módulo transaccional
+    private CardLayout transaccionCardLayout = new CardLayout();
+    
+    // Lista de instituciones (lado izquierdo de la pantalla transaccional)
+    private JList<String> listaInstituciones;
+    
+    // Panel para el módulo de préstamos (con su propio CardLayout)
+    private JPanel prestamosCards;
+    private CardLayout prestamosCardLayout = new CardLayout();
+    
+    private JTextField txtMontoActual;
+    private JTextArea areaBilletes;
+    
+    private Map<String, Integer> billetes = new HashMap<>();
+    private Map<String, Integer> monedas = new HashMap<>();
+
+    private Map<String, Double> subtotalDocumentosPorInstitucion = new HashMap<>();
+    private Map<String, Double> subtotalEfectivoPorInstitucion = new HashMap<>();
+
+    /**
+     * Constructor de la clase AplicacionDemo.
+     * Inicializa la interfaz y carga los datos iniciales.
+     */
+    public AplicacionDemo() {
+        setTitle("SuperPagos - Sistema");
+        setSize(1000, 650);
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
+        
+        txtMontoActual = new JTextField(10);
+        txtMontoActual.setEditable(false);
+        areaBilletes = new JTextArea(6, 30);
+        areaBilletes.setBorder(BorderFactory.createTitledBorder("Detalle de billetes"));
+
+        cargarDatos();
+        inicializarBilletesYMonedas();
+        initUI();
+        mostrarLogin();
+    }
+    
+    /**
+     * Carga datos iniciales: usuarios e instituciones.
+     */
+    private void cargarDatos() {
+        // Se utiliza el método modificado para inicializar los usuarios desde archivo.
+        initializeUsersFromFile("C:\\Users\\MSI-PULSE\\Desktop\\prueba\\users.txt");
+        // Asegurarse de que el usuario admin siempre exista.
+        if (!usuarios.containsKey("admin")) {
+            usuarios.put("admin", "admin");
+        }
+        inicializarInstituciones();
+    }
+    
+    /**
+     * Inicializa la interfaz principal y todas las pantallas.
+     */
+    private void initUI() {
+        mainPanel = new JPanel(new CardLayout());
+        
+        loginPanel = crearLoginPanel();
+        menuInicialPanel = crearMenuInicialPanel();
+        transaccionalPanel = crearPanelTransaccional();
+        prestamosPanel = crearPanelPrestamos();
+        
+        mainPanel.add(loginPanel, LOGIN);
+        mainPanel.add(menuInicialPanel, MENU_INICIAL);
+        mainPanel.add(transaccionalPanel, TRANSACCIONAL);
+        mainPanel.add(prestamosPanel, PRESTAMOS);
+        
+        add(mainPanel);
+    }
+    
+    /**
+     * Inicializa los usuarios leyendo el archivo indicado.
+     * Cada línea debe tener el formato: usuario,contraseña,codigo,nombre
+     * @param filename Ruta del archivo de usuarios.
+     */
+    private void initializeUsersFromFile(String filename) {
+        usuarios = new HashMap<>();
+        try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                String[] parts = line.split(",");
+                if (parts.length == 4) {
+                    usuarios.put(parts[0].trim(), parts[1].trim());
+                    nominaDetails.put(parts[0].trim() + "_codigo", parts[2].trim());
+                    nominaDetails.put(parts[0].trim() + "_nombre", parts[3].trim());
+                } else {
+                    JOptionPane.showMessageDialog(this, "Formato incorrecto en el archivo de usuarios.", "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, "Error al leer el archivo de usuarios: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+  
+    // PANTALLA DE LOGIN
+    
+    /**
+     * Crea el panel de login.
+     * @return JPanel con el formulario de login.
+     */
+    private JPanel crearLoginPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(10, 10, 10, 10);
+        
+        JLabel lblTitulo = new JLabel("Ingreso al Sistema");
+        // Se usa java.awt.Font para evitar conflicto con iText
+        lblTitulo.setFont(new java.awt.Font("Arial", java.awt.Font.BOLD, 26));
+        
+        JTextField txtUsuario = new JTextField(20);
+        JPasswordField txtPass = new JPasswordField(20);
+        JButton btnLogin = new JButton("Ingresar");
+        
+        btnLogin.addActionListener(e -> validarLogin(txtUsuario.getText(), new String(txtPass.getPassword())));
+        
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 2;
+        panel.add(lblTitulo, gbc);
+        gbc.gridwidth = 1;
+        gbc.gridx = 0; gbc.gridy = 1;
+        panel.add(new JLabel("Usuario:"), gbc);
+        gbc.gridx = 1;
+        panel.add(txtUsuario, gbc);
+        
+        gbc.gridx = 0; gbc.gridy = 2;
+        panel.add(new JLabel("Contraseña:"), gbc);
+        gbc.gridx = 1;
+        panel.add(txtPass, gbc);
+        
+        gbc.gridx = 1; gbc.gridy = 3;
+        panel.add(btnLogin, gbc);
+        
+        return panel;
+    }
+    
+    /**
+     * Valida el login comparando contra el archivo de usuarios.
+     * @param usuario Nombre de usuario.
+     * @param clave Contraseña del usuario.
+     */
+    private void validarLogin(String usuario, String clave) {
+        try (BufferedReader br = new BufferedReader(new FileReader("C:\\Users\\MSI-PULSE\\Desktop\\prueba\\users.txt"))) {
+            String line;
+            boolean loginSuccessful = false;
+            while ((line = br.readLine()) != null) {
+                String[] parts = line.split(",");
+                if (parts.length == 4 && parts[0].trim().equals(usuario) && parts[1].trim().equals(clave)) {
+                    loginSuccessful = true;
+                    nominaDetails.put("codigo", parts[2].trim());
+                    nominaDetails.put("nombre", parts[3].trim());
+                    break;
+                }
+            }
+            if (loginSuccessful) {
+                ((CardLayout) mainPanel.getLayout()).show(mainPanel, MENU_INICIAL);
+            } else {
+                throw new IllegalArgumentException("Credenciales inválidas");
+            }
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, "Error al leer el archivo de usuarios: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    /**
+     * Muestra la pantalla de login.
+     */
+    private void mostrarLogin() {
+        ((CardLayout) mainPanel.getLayout()).show(mainPanel, LOGIN);
+    }
+    
+
+    // PANTALLA INICIAL (MENÚ PRINCIPAL)
+    
+    /**
+     * Crea el panel del menú inicial.
+     * @return JPanel con el menú inicial.
+     */
+    private JPanel crearMenuInicialPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(40, 40, 40, 40));
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(20, 20, 20, 20);
+        
+        JLabel lblTitulo = new JLabel("Bienvenido a SuperPagos");
+        lblTitulo.setFont(new java.awt.Font("Arial", java.awt.Font.BOLD, 26));
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 2;
+        panel.add(lblTitulo, gbc);
+        
+        JButton btnTransaccional = new JButton("Módulo Transaccional");
+        JButton btnPrestamos = new JButton("Módulo de Préstamos");
+        JButton btnSalir = new JButton("Salir");
+        
+        btnTransaccional.addActionListener(e -> {
+            ((CardLayout) mainPanel.getLayout()).show(mainPanel, TRANSACCIONAL);
+        });
+        
+        btnPrestamos.addActionListener(e -> {
+            ((CardLayout) mainPanel.getLayout()).show(mainPanel, PRESTAMOS);
+        });
+        
+        btnSalir.addActionListener(e -> {
+            int res = JOptionPane.showConfirmDialog(this, "¿Está seguro de salir?", "Confirmar salida", JOptionPane.YES_NO_OPTION);
+            if (res == JOptionPane.YES_OPTION) {
+                mostrarLogin();
+            }
+        });
+        
+        gbc.gridwidth = 1;
+        gbc.gridx = 0; gbc.gridy = 1;
+        panel.add(btnTransaccional, gbc);
+        gbc.gridx = 1;
+        panel.add(btnPrestamos, gbc);
+        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 2;
+        panel.add(btnSalir, gbc);
+        
+        return panel;
+    }
+    
+
+    // MÓDULO TRANSACCIONAL
+
+    /**
+     * Crea el panel del módulo transaccional.
+     * @return JPanel con el módulo transaccional.
+     */
+    private JPanel crearPanelTransaccional() {
+        JPanel panel = new JPanel(new BorderLayout());
+        
+        // Menú horizontal (parte superior de la pantalla transaccional)
+        JPanel menuHorizontal = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        String[] opcionesMenu = {"Caja", "Pagos", "Cobros", "Reportes", "Salir"};
+        for (String opcion : opcionesMenu) {
+            JButton btn = new JButton(opcion);
+            btn.addActionListener(e -> manejarMenuHorizontal(opcion));
+            menuHorizontal.add(btn);
+        }
+        
+        // Panel dividido: Izquierdo (25% ancho) y Derecho (75% ancho)
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
+        splitPane.setDividerLocation(250);
+        
+        // Panel izquierdo: lista de instituciones y menú vertical
+        JPanel panelIzquierdo = new JPanel(new BorderLayout());
+        listaInstituciones = new JList<>(instituciones.keySet().toArray(new String[0]));
+        listaInstituciones.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        listaInstituciones.addListSelectionListener(e -> actualizarMenuTransacciones());
+        panelIzquierdo.add(new JScrollPane(listaInstituciones), BorderLayout.NORTH);
+        
+        menuVerticalPanel = new JPanel();
+        menuVerticalPanel.setLayout(new BoxLayout(menuVerticalPanel, BoxLayout.Y_AXIS));
+        JScrollPane scrollMenuVertical = new JScrollPane(menuVerticalPanel);
+        panelIzquierdo.add(scrollMenuVertical, BorderLayout.CENTER);
+        
+        // Panel derecho: Área para mostrar formularios (usamos CardLayout)
+        transaccionCards = new JPanel(transaccionCardLayout);
+        // Agregar formularios de cada transacción
+        transaccionCards.add(crearFormularioIngresoCaja(), "Ingreso Caja");
+        transaccionCards.add(crearFormularioEgresoCaja(), "Egreso Caja");
+        transaccionCards.add(crearFormularioNomina(), "Nómina");
+        transaccionCards.add(crearFormularioPagoCheques(), "Pago Cheques");
+        transaccionCards.add(crearFormularioActualizacionLibretas(), "Actualización Libretas");
+        transaccionCards.add(crearFormularioRetiroConLibreta(), "Retiro con Libreta");
+        transaccionCards.add(crearFormularioRetiroSinLibreta(), "Retiro sin Libreta");
+        transaccionCards.add(crearFormularioPagoGiros(), "Pago Giros");
+        transaccionCards.add(crearFormularioDepositoEfectivo(), "Depósito Efectivo");
+        transaccionCards.add(crearFormularioDepositoCheques(), "Depósito Cheques");
+        transaccionCards.add(crearFormularioDepositoMixto(), "Depósito Mixto");
+        transaccionCards.add(crearFormularioPagoRevisionVehicular(), "Pago Revisión Vehicular");
+        transaccionCards.add(crearFormularioPagoMatriculacion(), "Pago Matriculación Vehicular");
+        transaccionCards.add(crearFormularioPagoPlanillaEEQ(), "Pago Planilla EEQ");
+        transaccionCards.add(crearFormularioPagoImpuestoPredial(), "Pago Impuesto Predial");
+        transaccionCards.add(crearReporteCierre(), "Cierre de Caja");
+        transaccionCards.add(crearReporteNomina(), "Reporte Nómina");
+        
+        splitPane.setLeftComponent(panelIzquierdo);
+        splitPane.setRightComponent(transaccionCards);
+        
+        panel.add(menuHorizontal, BorderLayout.NORTH);
+        panel.add(splitPane, BorderLayout.CENTER);
+        return panel;
+    }
+    
+    /**
+     * Actualiza el menú vertical en función de la institución seleccionada.
+     * Se agrupan los botones en 4 grupos: CAJA, PAGOS, COBROS y REPORTES.
+     */
+    private void actualizarMenuTransacciones() {
+        menuVerticalPanel.removeAll();
+        String institucionSeleccionada = listaInstituciones.getSelectedValue();
+        
+        if (institucionSeleccionada != null) {
+            Set<String> permitidas = instituciones.get(institucionSeleccionada);
+            
+            // Grupo CAJA: Se activan siempre "Ingreso Caja", "Egreso Caja" y "Nómina"
+            agregarGrupoTransacciones("CAJA", Arrays.asList("Ingreso Caja", "Egreso Caja", "Nómina"), permitidas);
+            // Grupo PAGOS
+            agregarGrupoTransacciones("PAGOS", Arrays.asList("Pago Cheques", "Actualización Libretas", "Retiro con Libreta", "Retiro sin Libreta", "Pago Giros"), permitidas);
+            // Grupo COBROS
+            agregarGrupoTransacciones("COBROS", Arrays.asList("Depósito Efectivo", "Depósito Cheques", "Depósito Mixto",
+                    "Pago Revisión Vehicular", "Pago Matriculación Vehicular", "Pago Planilla EEQ", "Pago Impuesto Predial"), permitidas);
+            // Grupo REPORTES
+            agregarGrupoTransacciones("REPORTES", Arrays.asList("Cierre de Caja", "Reporte Nómina"), permitidas);
+        }
+        
+        menuVerticalPanel.revalidate();
+        menuVerticalPanel.repaint();
+    }
+    
+    /**
+     * Agrega un grupo de botones al menú vertical.
+     * Se fuerza que "Ingreso Caja", "Egreso Caja" y "Nómina" estén siempre habilitados.
+     * @param titulo Título del grupo.
+     * @param transacciones Lista de transacciones.
+     * @param permitidas Set de transacciones permitidas.
+     */
+    private void agregarGrupoTransacciones(String titulo, List<String> transacciones, Set<String> permitidas) {
+        JPanel grupo = new JPanel();
+        grupo.setLayout(new BoxLayout(grupo, BoxLayout.Y_AXIS));
+        grupo.setBorder(new TitledBorder(titulo));
+        for (String transaccion : transacciones) {
+            JButton btn = new JButton(transaccion);
+            btn.setAlignmentX(Component.CENTER_ALIGNMENT);
+            if (transaccion.equals("Ingreso Caja") || transaccion.equals("Egreso Caja") || transaccion.equals("Nómina")) {
+                btn.setEnabled(true);
+            } else {
+                btn.setEnabled(permitidas.contains(transaccion));
+                if (!permitidas.contains(transaccion)) {
+                    btn.setForeground(Color.GRAY);
+                    btn.addMouseListener(new MouseAdapter() {
+                        @Override
+                        public void mouseClicked(MouseEvent e) {
+                            JOptionPane.showMessageDialog(AplicacionDemo.this, "Transacción no disponible para la institución seleccionada.");
+                        }
+
+                        @Override
+                        public void mouseEntered(MouseEvent e) {
+                            btn.setToolTipText("Transacción no disponible para la institución seleccionada.");
+                        }
+                    });
+                }
+            }
+            btn.addActionListener(e -> {
+                if (!permitidas.contains(transaccion) &&
+                    !(transaccion.equals("Ingreso Caja") || transaccion.equals("Egreso Caja") || transaccion.equals("Nómina"))) {
+                    JOptionPane.showMessageDialog(this, "Transacción no disponible para la institución seleccionada.");
+                } else {
+                    transaccionCardLayout.show(transaccionCards, transaccion);
+                }
+            });
+            grupo.add(btn);
+        }
+        menuVerticalPanel.add(grupo);
+    }
+    
+    // FORMULARIOS DEL MÓDULO TRANSACCIONAL
+
+    // ---------- CAJA ----------
+    /**
+     * Crea el formulario de ingreso de caja.
+     * @return JPanel con el formulario de ingreso de caja.
+     */
+    private JPanel crearFormularioIngresoCaja() {
+        JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+        panel.setBorder(BorderFactory.createTitledBorder("Ingreso de Caja"));
+        
+        JComboBox<String> origen = new JComboBox<>(new String[]{"Cajero", "Bóveda"});
+        JComboBox<String> destino = new JComboBox<>(new String[]{"Cajero", "Bóveda"});
+        JTextField txtMonto = new JTextField();
+        JButton btnRegistrar = new JButton("Registrar Ingreso");
+        
+        btnRegistrar.addActionListener(e -> {
+            String montoStr = txtMonto.getText().trim();
+            if(montoStr.isEmpty()){
+                JOptionPane.showMessageDialog(this, "El monto es obligatorio.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            try {
+                double valor = Double.parseDouble(montoStr);
+                if (valor <= 0) {
+                    throw new NumberFormatException("El monto debe ser mayor a cero.");
+                }
+                saldoCaja += valor;
+                actualizarBilletesYMonedas(valor, true);
+                JOptionPane.showMessageDialog(this, "Ingreso de caja realizado: $" + valor);
+                verificarExcedenteCaja();
+                actualizarMontoActual(); // Update current balance
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Monto inválido: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        panel.add(new JLabel("Origen:"));
+        panel.add(origen);
+        panel.add(new JLabel("Destino:"));
+        panel.add(destino);
+        panel.add(new JLabel("Monto ($):"));
+        panel.add(txtMonto);
+        panel.add(new JLabel());
+        panel.add(btnRegistrar);
+        return panel;
+    }
+    
+    /**
+     * Crea el formulario de egreso de caja.
+     * @return JPanel con el formulario de egreso de caja.
+     */
+    private JPanel crearFormularioEgresoCaja() {
+        JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+        panel.setBorder(BorderFactory.createTitledBorder("Egreso de Caja"));
+        
+        JComboBox<String> origen = new JComboBox<>(new String[]{"Cajero", "Bóveda"});
+        JComboBox<String> destino = new JComboBox<>(new String[]{"Cajero", "Bóveda"});
+        JTextField txtMonto = new JTextField();
+        JButton btnRegistrar = new JButton("Registrar Egreso");
+        
+        btnRegistrar.addActionListener(e -> {
+            String montoStr = txtMonto.getText().trim();
+            if(montoStr.isEmpty()){
+                JOptionPane.showMessageDialog(this, "El monto es obligatorio.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            try {
+                double valor = Double.parseDouble(montoStr);
+                if (valor <= 0) {
+                    throw new NumberFormatException("El monto debe ser mayor a cero.");
+                }
+                if (valor > saldoCaja) {
+                    throw new IllegalArgumentException("Fondos insuficientes");
+                }
+                saldoCaja -= valor;
+                actualizarBilletesYMonedas(valor, false);
+                JOptionPane.showMessageDialog(this, "Egreso de caja realizado: $" + valor);
+                verificarExcedenteCaja();
+                actualizarMontoActual(); // Update current balance
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Monto inválido: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        panel.add(new JLabel("Origen:"));
+        panel.add(origen);
+        panel.add(new JLabel("Destino:"));
+        panel.add(destino);
+        panel.add(new JLabel("Monto ($):"));
+        panel.add(txtMonto);
+        panel.add(new JLabel());
+        panel.add(btnRegistrar);
+        return panel;
+    }
+    
+    /**
+     * Crea el formulario de nómina.
+     * @return JPanel con el formulario de nómina.
+     */
+    private JPanel crearFormularioNomina() {
+    JPanel panel = new JPanel(new BorderLayout());
+    panel.setBorder(BorderFactory.createTitledBorder("Nómina"));
+
+    JPanel formulario = new JPanel(new GridLayout(0, 2, 10, 10));
+    JTextField txtCodigo = new JTextField();
+    JTextField txtNombre = new JTextField();
+    JComboBox<String> cbHorario = new JComboBox<>(new String[]{"Normal", "Diferido"});
+
+    areaBilletes = new JTextArea(12, 30); // Increased height to accommodate both bills and coins
+    areaBilletes.setBorder(BorderFactory.createTitledBorder("Detalle de billetes y monedas"));
+
+    JButton btnGuardar = new JButton("Guardar Nómina");
+    btnGuardar.addActionListener(e -> {
+        if (txtCodigo.getText().trim().isEmpty() || txtNombre.getText().trim().isEmpty()) {
+            JOptionPane.showMessageDialog(this, "El código y nombre del cajero son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            double monto = saldoCaja; // Use current balance amount
+
+            int billetes100 = billetes.get("100");
+            int billetes50 = billetes.get("50");
+            int billetes20 = billetes.get("20");
+            int billetes10 = billetes.get("10");
+            int billetes5 = billetes.get("5");
+            int billetes1 = billetes.get("1");
+
+            int monedas50c = monedas.get("0.50");
+            int monedas25c = monedas.get("0.25");
+            int monedas10c = monedas.get("0.10");
+            int monedas5c = monedas.get("0.05");
+            int monedas1c = monedas.get("0.01");
+
+            double totalBilletes = billetes100 * 100 + billetes50 * 50 + billetes20 * 20 + billetes10 * 10 + billetes5 * 5 + billetes1;
+            double totalMonedas = monedas50c * 0.50 + monedas25c * 0.25 + monedas10c * 0.10 + monedas5c * 0.05 + monedas1c * 0.01;
+            double totalVerificado = totalBilletes + totalMonedas;
+            double totalDisponible = saldoCaja;
+            double diferencia = totalVerificado - totalDisponible;
+
+            areaBilletes.setText("Denominación\tCantidad\tTotal\n" +
+                    "$100\t" + billetes100 + "\t" + (billetes100 * 100) + "\n" +
+                    "$50\t" + billetes50 + "\t" + (billetes50 * 50) + "\n" +
+                    "$20\t" + billetes20 + "\t" + (billetes20 * 20) + "\n" +
+                    "$10\t" + billetes10 + "\t" + (billetes10 * 10) + "\n" +
+                    "$5\t" + billetes5 + "\t" + (billetes5 * 5) + "\n" +
+                    "$1\t" + billetes1 + "\t" + billetes1 + "\n" +
+                    "$0.50\t" + monedas50c + "\t" + (monedas50c * 0.50) + "\n" +
+                    "$0.25\t" + monedas25c + "\t" + (monedas25c * 0.25) + "\n" +
+                    "$0.10\t" + monedas10c + "\t" + (monedas10c * 0.10) + "\n" +
+                    "$0.05\t" + monedas5c + "\t" + (monedas5c * 0.05) + "\n" +
+                    "$0.01\t" + monedas1c + "\t" + (monedas1c * 0.01) + "\n" +
+                    "Total Billetes: $" + totalBilletes + "\n" +
+                    "Total Monedas: $" + totalMonedas + "\n" +
+                    "Total Verificado: $" + totalVerificado + "\n" +
+                    "Total Disponible: $" + totalDisponible + "\n" +
+                    "Diferencia: $" + diferencia);
+
+            // Save the details for the report
+            nominaDetails.put("codigo", txtCodigo.getText().trim());
+            nominaDetails.put("nombre", txtNombre.getText().trim());
+            nominaDetails.put("horario", (String) cbHorario.getSelectedItem());
+            nominaDetails.put("billetes", areaBilletes.getText().trim());
+
+            JOptionPane.showMessageDialog(this, "La nómina ha sido guardada con éxito.");
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Monto inválido: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    });
+
+    formulario.add(new JLabel("Código de Cajero:"));
+    formulario.add(txtCodigo);
+    formulario.add(new JLabel("Nombre de Cajero:"));
+    formulario.add(txtNombre);
+    formulario.add(new JLabel("Horario:"));
+    formulario.add(cbHorario);
+    formulario.add(new JLabel("Monto Actual ($):"));
+    formulario.add(txtMontoActual); // Add current balance field
+
+    panel.add(formulario, BorderLayout.NORTH);
+    panel.add(new JScrollPane(areaBilletes), BorderLayout.CENTER);
+    panel.add(btnGuardar, BorderLayout.SOUTH);
+
+    return panel;
+}
+
+    
+    // ---------- PAGOS ----------
+    /**
+     * Crea el formulario de pago de cheques.
+     * @return JPanel con el formulario de pago de cheques.
+     */
+    private JPanel crearFormularioPagoCheques() {
+    JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+    panel.setBorder(BorderFactory.createTitledBorder("Pago de Cheques"));
+    
+    JTextField txtNumCuenta = new JTextField("1234567890");
+    JTextField txtNumCheque = new JTextField("987654321");
+    JTextField txtTitular = new JTextField("Juan Pérez");
+    JTextField txtBeneficiario = new JTextField("María López");
+    JTextField txtMonto = new JTextField("100");
+    JButton btnVerificarFirma = new JButton("Verificar Firma");
+    JButton btnPagar = new JButton("Pagar Cheque");
+    
+    final boolean[] firmaVerificada = {false};
+    
+    btnVerificarFirma.addActionListener(e -> {
+        // Crear un nuevo diálogo para verificar la firma
+        JDialog dialog = new JDialog();
+        dialog.setTitle("Verificar Firma");
+        dialog.setSize(300, 200);
+        dialog.setLocationRelativeTo(null);
+        
+        // Usar una fuente especial
+        JLabel lblNombre = new JLabel(txtTitular.getText());
+        lblNombre.setFont(new java.awt.Font("Serif", java.awt.Font.ITALIC, 18));
+        lblNombre.setHorizontalAlignment(SwingConstants.CENTER);
+        
+        JButton btnAceptar = new JButton("Aceptar");
+        JButton btnRechazar = new JButton("Rechazar");
+        
+        btnAceptar.addActionListener(evt -> {
+            JOptionPane.showMessageDialog(dialog, "Firma Aceptada");
+            firmaVerificada[0] = true;
+            dialog.dispose();
+        });
+        
+        btnRechazar.addActionListener(evt -> {
+            JOptionPane.showMessageDialog(dialog, "Firma Rechazada");
+            firmaVerificada[0] = false;
+            dialog.dispose();
+        });
+        
+        JPanel dialogPanel = new JPanel(new BorderLayout());
+        dialogPanel.add(lblNombre, BorderLayout.CENTER);
+        
+        JPanel buttonPanel = new JPanel();
+        buttonPanel.add(btnAceptar);
+        buttonPanel.add(btnRechazar);
+        
+        dialogPanel.add(buttonPanel, BorderLayout.SOUTH);
+        
+        dialog.add(dialogPanel);
+        dialog.setVisible(true);
+    });
+    
+    btnPagar.addActionListener(e -> {
+        if (!firmaVerificada[0]) {
+            JOptionPane.showMessageDialog(this, "Debe verificar la firma antes de proceder.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if(txtNumCuenta.getText().trim().isEmpty() || txtNumCheque.getText().trim().isEmpty() ||
+           txtTitular.getText().trim().isEmpty() || txtBeneficiario.getText().trim().isEmpty() ||
+           txtMonto.getText().trim().isEmpty()){
+            JOptionPane.showMessageDialog(this, "Todos los campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            double valor = Double.parseDouble(txtMonto.getText().trim());
+            if (valor <= 0) {
+                throw new NumberFormatException("El monto debe ser mayor a cero.");
+            }
+            if (valor > saldoCaja)
+                throw new IllegalArgumentException("Fondos insuficientes");
+            saldoCaja -= valor;
+            actualizarBilletesYMonedas(valor, false);
+            actualizarMontoActual(); // Update current balance
+
+            // Update institution subtotals
+            String institucionSeleccionada = listaInstituciones.getSelectedValue();
+            subtotalDocumentosPorInstitucion.put(institucionSeleccionada, subtotalDocumentosPorInstitucion.getOrDefault(institucionSeleccionada, 0.0) + valor);
+
+            JOptionPane.showMessageDialog(this, "Cheque pagado: $" + valor);
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Monto inválido: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    });
+    
+    panel.add(new JLabel("N° Cuenta:"));
+    panel.add(txtNumCuenta);
+    panel.add(new JLabel("N° Cheque:"));
+    panel.add(txtNumCheque);
+    panel.add(new JLabel("Titular:"));
+    panel.add(txtTitular);
+    panel.add(new JLabel("Beneficiario:"));
+    panel.add(txtBeneficiario);
+    panel.add(new JLabel("Monto ($):"));
+    panel.add(txtMonto);
+    panel.add(btnVerificarFirma);
+    panel.add(btnPagar);
+    return panel;
+}
+
+    /**
+     * Crea el formulario de actualización de libretas.
+     * @return JPanel con el formulario de actualización de libretas.
+     */
+    private JPanel crearFormularioActualizacionLibretas() {
+        JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+        panel.setBorder(BorderFactory.createTitledBorder("Actualización de Libretas"));
+        
+        JTextField txtCuenta = new JTextField("1234567890");
+        JTextField txtUltimoSaldo = new JTextField("500");
+        JTextField txtNumControl = new JTextField("001");
+        JTextField txtLinea = new JTextField("600");
+        JButton btnActualizar = new JButton("Actualizar Libreta");
+        
+        btnActualizar.addActionListener(e -> {
+            if(txtCuenta.getText().trim().isEmpty() || txtUltimoSaldo.getText().trim().isEmpty() ||
+               txtNumControl.getText().trim().isEmpty() || txtLinea.getText().trim().isEmpty()){
+                JOptionPane.showMessageDialog(this, "Todos los campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            JOptionPane.showMessageDialog(this, "Libreta actualizada correctamente.");
+            actualizarMontoActual(); // Update current balance
+        });
+        
+        panel.add(new JLabel("N° de Cuenta:"));
+        panel.add(txtCuenta);
+        panel.add(new JLabel("Último Saldo:"));
+        panel.add(txtUltimoSaldo);
+        panel.add(new JLabel("N° de Control:"));
+        panel.add(txtNumControl);
+        panel.add(new JLabel("Línea a imprimir:"));
+        panel.add(txtLinea);
+        panel.add(new JLabel());
+        panel.add(btnActualizar);
+        return panel;
+    }
+    
+    /**
+     * Crea el formulario de retiro con libreta.
+     * @return JPanel con el formulario de retiro con libreta.
+     */
+    private JPanel crearFormularioRetiroConLibreta() {
+    JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+    panel.setBorder(BorderFactory.createTitledBorder("Retiro de Ahorros con Libreta"));
+    
+    JTextField txtCuenta = new JTextField("1234567890");
+    JTextField txtUltimoSaldo = new JTextField("500");
+    JTextField txtNumControl = new JTextField("001");
+    JTextField txtMonto = new JTextField("100");
+    JButton btnRevisarFirma = new JButton("Revisar Firma");
+    JButton btnPagarRetiro = new JButton("Pagar Retiro");
+    
+    final boolean[] firmaVerificada = {false};
+    
+    btnRevisarFirma.addActionListener(e -> {
+        // Crear un nuevo diálogo para verificar la firma
+        JDialog dialog = new JDialog();
+        dialog.setTitle("Verificar Firma");
+        dialog.setSize(300, 200);
+        dialog.setLocationRelativeTo(null);
+        
+        // Usar una fuente especial
+        JLabel lblNombre = new JLabel(txtCuenta.getText());
+        lblNombre.setFont(new java.awt.Font("Serif", Font.ITALIC, 18));
+        lblNombre.setHorizontalAlignment(SwingConstants.CENTER);
+        
+        JButton btnAceptar = new JButton("Aceptar");
+        JButton btnRechazar = new JButton("Rechazar");
+        
+        btnAceptar.addActionListener(evt -> {
+            JOptionPane.showMessageDialog(dialog, "Firma Aceptada");
+            firmaVerificada[0] = true;
+            dialog.dispose();
+        });
+        
+        btnRechazar.addActionListener(evt -> {
+            JOptionPane.showMessageDialog(dialog, "Firma Rechazada");
+            firmaVerificada[0] = false;
+            dialog.dispose();
+        });
+        
+        JPanel dialogPanel = new JPanel(new BorderLayout());
+        dialogPanel.add(lblNombre, BorderLayout.CENTER);
+        
+        JPanel buttonPanel = new JPanel();
+        buttonPanel.add(btnAceptar);
+        buttonPanel.add(btnRechazar);
+        
+        dialogPanel.add(buttonPanel, BorderLayout.SOUTH);
+        
+        dialog.add(dialogPanel);
+        dialog.setVisible(true);
+    });
+    
+    btnPagarRetiro.addActionListener(e -> {
+        if (!firmaVerificada[0]) {
+            JOptionPane.showMessageDialog(this, "Debe verificar la firma antes de proceder.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if(txtCuenta.getText().trim().isEmpty() || txtUltimoSaldo.getText().trim().isEmpty() ||
+           txtNumControl.getText().trim().isEmpty() || txtMonto.getText().trim().isEmpty()){
+            JOptionPane.showMessageDialog(this, "Todos los campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            double valor = Double.parseDouble(txtMonto.getText().trim());
+            if (valor <= 0) {
+                throw new NumberFormatException("El monto debe ser mayor a cero.");
+            }
+            if (valor > saldoCaja)
+                throw new IllegalArgumentException("Fondos insuficientes");
+            saldoCaja -= valor;
+            actualizarBilletesYMonedas(valor, false);
+            actualizarMontoActual(); // Update current balance
+            JOptionPane.showMessageDialog(this, "Retiro realizado con éxito.");
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Monto inválido: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    });
+    
+    panel.add(new JLabel("N° de Cuenta:"));
+    panel.add(txtCuenta);
+    panel.add(new JLabel("Último Saldo:"));
+    panel.add(txtUltimoSaldo);
+    panel.add(new JLabel("N° de Control:"));
+    panel.add(txtNumControl);
+    panel.add(new JLabel("Monto a retirar:"));
+    panel.add(txtMonto);
+    panel.add(btnRevisarFirma);
+    panel.add(btnPagarRetiro);
+    return panel;
+}
+
+    
+    /**
+     * Crea el formulario de retiro sin libreta.
+     * @return JPanel con el formulario de retiro sin libreta.
+     */
+    private JPanel crearFormularioRetiroSinLibreta() {
+    JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+    panel.setBorder(BorderFactory.createTitledBorder("Retiro de Ahorros sin Libreta"));
+    
+    JTextField txtCuenta = new JTextField("1234567890");
+    JTextField txtMonto = new JTextField("100");
+    JButton btnRevisarFirma = new JButton("Revisar Firma");
+    JButton btnPagarRetiro = new JButton("Pagar Retiro");
+    
+    final boolean[] firmaVerificada = {false};
+    
+    btnRevisarFirma.addActionListener(e -> {
+        // Crear un nuevo diálogo para verificar la firma
+        JDialog dialog = new JDialog();
+        dialog.setTitle("Verificar Firma");
+        dialog.setSize(300, 200);
+        dialog.setLocationRelativeTo(null);
+        
+        // Usar una fuente especial
+        JLabel lblNombre = new JLabel("Emilio Sarzosa");
+        lblNombre.setFont(new java.awt.Font("Serif", Font.ITALIC, 18));
+        lblNombre.setHorizontalAlignment(SwingConstants.CENTER);
+        
+        JButton btnAceptar = new JButton("Aceptar");
+        JButton btnRechazar = new JButton("Rechazar");
+        
+        btnAceptar.addActionListener(evt -> {
+            JOptionPane.showMessageDialog(dialog, "Firma Aceptada");
+            firmaVerificada[0] = true;
+            dialog.dispose();
+        });
+        
+        btnRechazar.addActionListener(evt -> {
+            JOptionPane.showMessageDialog(dialog, "Firma Rechazada");
+            firmaVerificada[0] = false;
+            dialog.dispose();
+        });
+        
+        JPanel dialogPanel = new JPanel(new BorderLayout());
+        dialogPanel.add(lblNombre, BorderLayout.CENTER);
+        
+        JPanel buttonPanel = new JPanel();
+        buttonPanel.add(btnAceptar);
+        buttonPanel.add(btnRechazar);
+        
+        dialogPanel.add(buttonPanel, BorderLayout.SOUTH);
+        
+        dialog.add(dialogPanel);
+        dialog.setVisible(true);
+    });
+    
+    btnPagarRetiro.addActionListener(e -> {
+        if (!firmaVerificada[0]) {
+            JOptionPane.showMessageDialog(this, "Debe verificar la firma antes de proceder.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if(txtCuenta.getText().trim().isEmpty() || txtMonto.getText().trim().isEmpty()){
+            JOptionPane.showMessageDialog(this, "Todos los campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            double valor = Double.parseDouble(txtMonto.getText().trim());
+            if (valor <= 0) {
+                throw new NumberFormatException("El monto debe ser mayor a cero.");
+            }
+            if (valor > saldoCaja)
+                throw new IllegalArgumentException("Fondos insuficientes");
+            saldoCaja -= valor;
+            actualizarBilletesYMonedas(valor, false);
+            actualizarMontoActual(); // Update current balance
+            JOptionPane.showMessageDialog(this, "Retiro sin libreta realizado con éxito.");
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Monto inválido: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    });
+    
+    panel.add(new JLabel("N° de Cuenta:"));
+    panel.add(txtCuenta);
+    panel.add(new JLabel("Monto a retirar:"));
+    panel.add(txtMonto);
+    panel.add(btnRevisarFirma);
+    panel.add(btnPagarRetiro);
+    return panel;
+}
+
+    /**
+     * Crea el formulario de pago de giros.
+     * @return JPanel con el formulario de pago de giros.
+     */
+    private JPanel crearFormularioPagoGiros() {
+        JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+        panel.setBorder(BorderFactory.createTitledBorder("Pago de Giros"));
+        
+        JTextField txtCorresponsal = new JTextField("Western Union");
+        JTextField txtRemitente = new JTextField("Carlos Ruiz");
+        JTextField txtCedulaBenef = new JTextField("1234567890");
+        JTextField txtBeneficiario = new JTextField("Ana Gómez");
+        JTextField txtMonto = new JTextField("200");
+        JButton btnPagarGiro = new JButton("Pagar Giro");
+        
+        btnPagarGiro.addActionListener(e -> {
+            if(txtCorresponsal.getText().trim().isEmpty() || txtRemitente.getText().trim().isEmpty() ||
+               txtCedulaBenef.getText().trim().isEmpty() || txtBeneficiario.getText().trim().isEmpty() ||
+               txtMonto.getText().trim().isEmpty()){
+                JOptionPane.showMessageDialog(this, "Todos los campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            try {
+                double valor = Double.parseDouble(txtMonto.getText().trim());
+                if (valor <= 0) {
+                    throw new NumberFormatException("El monto debe ser mayor a cero.");
+                }
+                saldoCaja -= valor;
+                actualizarBilletesYMonedas(valor, false);
+                actualizarMontoActual();
+                JOptionPane.showMessageDialog(this, "Giro pagado con éxito.");
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Monto inválido: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        panel.add(new JLabel("Corresponsal:"));
+        panel.add(txtCorresponsal);
+        panel.add(new JLabel("Nombre remitente:"));
+        panel.add(txtRemitente);
+        panel.add(new JLabel("Cédula beneficiario:"));
+        panel.add(txtCedulaBenef);
+        panel.add(new JLabel("Nombre beneficiario:"));
+        panel.add(txtBeneficiario);
+        panel.add(new JLabel("Monto girado:"));
+        panel.add(txtMonto);
+        panel.add(new JLabel());
+        panel.add(btnPagarGiro);
+        return panel;
+    }
+    
+    // ---------- COBROS ----------
+    /**
+     * Crea el formulario de depósito en efectivo.
+     * @return JPanel con el formulario de depósito en efectivo.
+     */
+    private JPanel crearFormularioDepositoEfectivo() {
+    JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+    panel.setBorder(BorderFactory.createTitledBorder("Depósito en Efectivo"));
+    
+    JTextField txtCuenta = new JTextField("1234567890");
+    JTextField txtNombre = new JTextField("Juan Pérez");
+    JTextField txtMonto = new JTextField("300");
+    JButton btnDepositar = new JButton("Registrar Depósito");
+    
+    btnDepositar.addActionListener(e -> {
+        if(txtCuenta.getText().trim().isEmpty() || txtNombre.getText().trim().isEmpty() ||
+           txtMonto.getText().trim().isEmpty()){
+            JOptionPane.showMessageDialog(this, "Todos los campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            double valor = Double.parseDouble(txtMonto.getText().trim());
+            if (valor <= 0) {
+                throw new NumberFormatException("El monto debe ser mayor a cero.");
+            }
+            saldoCaja += valor;
+            actualizarBilletesYMonedas(valor, true);
+            actualizarMontoActual(); // Update current balance
+
+            // Update institution subtotals
+            String institucionSeleccionada = listaInstituciones.getSelectedValue();
+            subtotalEfectivoPorInstitucion.put(institucionSeleccionada, subtotalEfectivoPorInstitucion.getOrDefault(institucionSeleccionada, 0.0) + valor);
+
+            JOptionPane.showMessageDialog(this, "Depósito en efectivo realizado: $" + valor);
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Monto inválido: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    });
+    
+    panel.add(new JLabel("N° de Cuenta Destino:"));
+    panel.add(txtCuenta);
+    panel.add(new JLabel("Nombre del dueño de la cuenta:"));
+    panel.add(txtNombre);
+    panel.add(new JLabel("Monto ($):"));
+    panel.add(txtMonto);
+    panel.add(new JLabel());
+    panel.add(btnDepositar);
+    return panel;
+}
+    
+    /**
+     * Crea el formulario de depósito en cheques.
+     * @return JPanel con el formulario de depósito en cheques.
+     */
+    private JPanel crearFormularioDepositoCheques() {
+    JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+    panel.setBorder(BorderFactory.createTitledBorder("Depósito en Cheques"));
+    
+    JTextField txtCuenta = new JTextField("1234567890");
+    JTextField txtNombre = new JTextField("Juan Pérez");
+    JTextField txtMonto = new JTextField("400");
+    JTextField txtNumCheques = new JTextField("2");
+    JButton btnDepositar = new JButton("Registrar Depósito");
+    
+    btnDepositar.addActionListener(e -> {
+        if(txtCuenta.getText().trim().isEmpty() || txtNombre.getText().trim().isEmpty() ||
+           txtMonto.getText().trim().isEmpty() || txtNumCheques.getText().trim().isEmpty()){
+            JOptionPane.showMessageDialog(this, "Todos los campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            double valor = Double.parseDouble(txtMonto.getText().trim());
+            if (valor <= 0) {
+                throw new NumberFormatException("El monto debe ser mayor a cero.");
+            }
+            // No affect cash balance for cheque deposits
+            // saldoCaja += valor;
+            // actualizarBilletesYMonedas(valor, true);
+            actualizarMontoActual(); // Update current balance
+
+            // Update institution subtotals
+            String institucionSeleccionada = listaInstituciones.getSelectedValue();
+            subtotalDocumentosPorInstitucion.put(institucionSeleccionada, subtotalDocumentosPorInstitucion.getOrDefault(institucionSeleccionada, 0.0) + valor);
+
+            JOptionPane.showMessageDialog(this, "Depósito en cheques realizado: $" + valor);
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Monto inválido: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    });
+    
+    panel.add(new JLabel("N° de Cuenta Destino:"));
+    panel.add(txtCuenta);
+    panel.add(new JLabel("Nombre del dueño de la cuenta:"));
+    panel.add(txtNombre);
+    panel.add(new JLabel("Monto en cheques ($):"));
+    panel.add(txtMonto);
+    panel.add(new JLabel("N° de Cheques:"));
+    panel.add(txtNumCheques);
+    panel.add(new JLabel());
+    panel.add(btnDepositar);
+    return panel;
+}
+
+    /**
+     * Crea el formulario de depósito mixto.
+     * @return JPanel con el formulario de depósito mixto.
+     */
+    private JPanel crearFormularioDepositoMixto() {
+    JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+    panel.setBorder(BorderFactory.createTitledBorder("Depósito Mixto"));
+    
+    JTextField txtCuenta = new JTextField("1234567890");
+    JTextField txtNombre = new JTextField("Juan Pérez");
+    JTextField txtMontoEfectivo = new JTextField("200");
+    JTextField txtMontoCheques = new JTextField("300");
+    JTextField txtNumCheques = new JTextField("2");
+    JButton btnDepositar = new JButton("Registrar Depósito");
+    
+    btnDepositar.addActionListener(e -> {
+        if(txtCuenta.getText().trim().isEmpty() || txtNombre.getText().trim().isEmpty() ||
+           txtMontoEfectivo.getText().trim().isEmpty() || txtMontoCheques.getText().trim().isEmpty() ||
+           txtNumCheques.getText().trim().isEmpty()){
+            JOptionPane.showMessageDialog(this, "Todos los campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            double efectivo = Double.parseDouble(txtMontoEfectivo.getText().trim());
+            double cheques = Double.parseDouble(txtMontoCheques.getText().trim());
+            if (efectivo < 0 || cheques < 0) {
+                throw new NumberFormatException("Los montos deben ser no negativos.");
+            }
+            saldoCaja += efectivo;
+            actualizarBilletesYMonedas(efectivo, true);
+            actualizarMontoActual();
+
+            // Update institution subtotals
+            String institucionSeleccionada = listaInstituciones.getSelectedValue();
+            subtotalEfectivoPorInstitucion.put(institucionSeleccionada, subtotalEfectivoPorInstitucion.getOrDefault(institucionSeleccionada, 0.0) + efectivo);
+            subtotalDocumentosPorInstitucion.put(institucionSeleccionada, subtotalDocumentosPorInstitucion.getOrDefault(institucionSeleccionada, 0.0) + cheques);
+
+            JOptionPane.showMessageDialog(this, "Depósito mixto realizado: Efectivo $" + efectivo + " y Cheques $" + cheques);
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Montos inválidos: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    });
+    
+    panel.add(new JLabel("N° de Cuenta Destino:"));
+    panel.add(txtCuenta);
+    panel.add(new JLabel("Nombre del dueño de la cuenta:"));
+    panel.add(txtNombre);
+    panel.add(new JLabel("Monto en Efectivo ($):"));
+    panel.add(txtMontoEfectivo);
+    panel.add(new JLabel("Monto en Cheques ($):"));
+    panel.add(txtMontoCheques);
+    panel.add(new JLabel("N° de Cheques:"));
+    panel.add(txtNumCheques);
+    panel.add(new JLabel());
+    panel.add(btnDepositar);
+    return panel;
+}
+    
+    /**
+     * Crea el formulario de pago de revisión vehicular.
+     * @return JPanel con el formulario de pago de revisión vehicular.
+     */
+    private JPanel crearFormularioPagoRevisionVehicular() {
+        JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+        panel.setBorder(BorderFactory.createTitledBorder("Pago de Revisión Vehicular"));
+        
+        JTextField txtPlaca = new JTextField("ABC-1234");
+        JTextField txtNombre = new JTextField("Juan Pérez"); txtNombre.setEditable(false);
+        JTextField txtMarca = new JTextField("Toyota"); txtMarca.setEditable(false);
+        JTextField txtModelo = new JTextField("Corolla"); txtModelo.setEditable(false);
+        JTextField txtAnio = new JTextField("2015"); txtAnio.setEditable(false);
+        JTextField txtMonto = new JTextField("50"); txtMonto.setEditable(false);
+        JButton btnConsultar = new JButton("Consultar");
+        JButton btnPagar = new JButton("Pagar Revisión");
+        
+        btnConsultar.addActionListener(e -> {
+            if(txtPlaca.getText().trim().isEmpty()){
+                JOptionPane.showMessageDialog(this, "El número de placa es obligatorio.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            // Simulación de consulta: se llenan los campos con valores de ejemplo.
+            txtNombre.setText("Juan Pérez");
+            txtMarca.setText("Toyota");
+            txtModelo.setText("Corolla");
+            txtAnio.setText("2015");
+            txtMonto.setText("50");
+        });
+        btnPagar.addActionListener(e -> {
+            try {
+                double valor = Double.parseDouble(txtMonto.getText().trim());
+                if (valor > saldoCaja)
+                    throw new IllegalArgumentException("Fondos insuficientes");
+                saldoCaja -= valor;
+                actualizarBilletesYMonedas(valor, false);
+                actualizarMontoActual();
+                JOptionPane.showMessageDialog(this, "Pago de revisión vehicular realizado: $" + valor);
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Primero consulte la información.", "Error", JOptionPane.ERROR_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        panel.add(new JLabel("Número de Placa:"));
+        panel.add(txtPlaca);
+        panel.add(btnConsultar);
+        panel.add(new JLabel());
+        panel.add(new JLabel("Propietario:"));
+        panel.add(txtNombre);
+        panel.add(new JLabel("Marca:"));
+        panel.add(txtMarca);
+        panel.add(new JLabel("Modelo:"));
+        panel.add(txtModelo);
+        panel.add(new JLabel("Año:"));
+        panel.add(txtAnio);
+        panel.add(new JLabel("Monto a Pagar ($):"));
+        panel.add(txtMonto);
+        panel.add(new JLabel());
+        panel.add(btnPagar);
+        return panel;
+    }
+    
+    /**
+     * Crea el formulario de pago de matriculación vehicular.
+     * @return JPanel con el formulario de pago de matriculación vehicular.
+     */
+    private JPanel crearFormularioPagoMatriculacion() {
+        JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+        panel.setBorder(BorderFactory.createTitledBorder("Pago de Matriculación Vehicular"));
+        
+        JTextField txtPlaca = new JTextField("DEF-5678");
+        JTextField txtNombre = new JTextField("María López"); txtNombre.setEditable(false);
+        JTextField txtMarca = new JTextField("Honda"); txtMarca.setEditable(false);
+        JTextField txtAnio = new JTextField("2017"); txtAnio.setEditable(false);
+        JTextField txtFechaRevision = new JTextField("2025-03-10"); txtFechaRevision.setEditable(false);
+        JTextField txtMonto = new JTextField("80"); txtMonto.setEditable(false);
+        JButton btnConsultar = new JButton("Consultar");
+        JButton btnPagar = new JButton("Pagar Matriculación");
+        
+        btnConsultar.addActionListener(e -> {
+            if(txtPlaca.getText().trim().isEmpty()){
+                JOptionPane.showMessageDialog(this, "El número de placa es obligatorio.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            txtNombre.setText("María López");
+            txtMarca.setText("Honda");
+            txtAnio.setText("2017");
+            txtFechaRevision.setText("2025-03-10");
+            txtMonto.setText("80");
+        });
+        btnPagar.addActionListener(e -> {
+            try {
+                double valor = Double.parseDouble(txtMonto.getText().trim());
+                if (valor > saldoCaja)
+                    throw new IllegalArgumentException("Fondos insuficientes");
+                saldoCaja -= valor;
+                actualizarBilletesYMonedas(valor, false);
+                actualizarMontoActual();
+                JOptionPane.showMessageDialog(this, "Pago de matriculación vehicular realizado: $" + valor);
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Primero consulte la información.", "Error", JOptionPane.ERROR_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        panel.add(new JLabel("Número de Placa:"));
+        panel.add(txtPlaca);
+        panel.add(btnConsultar);
+        panel.add(new JLabel());
+        panel.add(new JLabel("Propietario:"));
+        panel.add(txtNombre);
+        panel.add(new JLabel("Marca:"));
+        panel.add(txtMarca);
+        panel.add(new JLabel("Año:"));
+        panel.add(txtAnio);
+        panel.add(new JLabel("Fecha Revisión:"));
+        panel.add(txtFechaRevision);
+        panel.add(new JLabel("Monto a Pagar ($):"));
+        panel.add(txtMonto);
+        panel.add(new JLabel());
+        panel.add(btnPagar);
+        return panel;
+    }
+    
+    /**
+     * Crea el formulario de pago de planilla EEQ.
+     * @return JPanel con el formulario de pago de planilla EEQ.
+     */
+    private JPanel crearFormularioPagoPlanillaEEQ() {
+        JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+        panel.setBorder(BorderFactory.createTitledBorder("Pago de Planilla EEQ"));
+        
+        JTextField txtSuministro = new JTextField("123456");
+        JTextField txtPropietario = new JTextField("Carlos Ruiz"); txtPropietario.setEditable(false);
+        JTextField txtMes = new JTextField("Febrero"); txtMes.setEditable(false);
+        JTextField txtMonto = new JTextField("40"); txtMonto.setEditable(false);
+        JButton btnConsultar = new JButton("Consultar");
+        JButton btnPagar = new JButton("Pagar Planilla");
+        
+        btnConsultar.addActionListener(e -> {
+            if(txtSuministro.getText().trim().isEmpty()){
+                JOptionPane.showMessageDialog(this, "El número de suministro es obligatorio.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            txtPropietario.setText("Carlos Ruiz");
+            txtMes.setText("Febrero");
+            txtMonto.setText("40");
+        });
+        btnPagar.addActionListener(e -> {
+            try {
+                double valor = Double.parseDouble(txtMonto.getText().trim());
+                if (valor > saldoCaja)
+                    throw new IllegalArgumentException("Fondos insuficientes");
+                saldoCaja -= valor;
+                actualizarBilletesYMonedas(valor, false);
+                actualizarMontoActual();
+                JOptionPane.showMessageDialog(this, "Pago de planilla EEQ realizado: $" + valor);
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Primero consulte la información.", "Error", JOptionPane.ERROR_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        panel.add(new JLabel("N° de Suministro:"));
+        panel.add(txtSuministro);
+        panel.add(btnConsultar);
+        panel.add(new JLabel());
+        panel.add(new JLabel("Propietario:"));
+        panel.add(txtPropietario);
+        panel.add(new JLabel("Mes:"));
+        panel.add(txtMes);
+        panel.add(new JLabel("Monto a Pagar ($):"));
+        panel.add(txtMonto);
+        panel.add(new JLabel());
+        panel.add(btnPagar);
+        return panel;
+    }
+    
+    // IMPUESTO PREDIAL ----------
+    /**
+     * Crea el formulario de pago de impuesto predial.
+     * @return JPanel con el formulario de pago de impuesto predial.
+     */
+    private JPanel crearFormularioPagoImpuestoPredial() {
+        JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+        panel.setBorder(BorderFactory.createTitledBorder("Pago de Impuesto Predial"));
+        
+        JTextField txtPredio = new JTextField("123456");
+        JTextField txtCedula = new JTextField("1234567890");
+        JTextField txtPropietario = new JTextField("Luis Gómez"); txtPropietario.setEditable(false);
+        JTextField txtDireccion = new JTextField("Av. Central 123"); txtDireccion.setEditable(false);
+        JTextField txtTipo = new JTextField("Urbano"); txtTipo.setEditable(false);
+        JTextField txtAnio = new JTextField("2025"); txtAnio.setEditable(false);
+        JTextField txtMonto = new JTextField("120"); txtMonto.setEditable(false);
+        
+        JButton btnConsultar = new JButton("Consultar");
+        JButton btnPagar = new JButton("Pagar Impuesto");
+        
+        btnConsultar.addActionListener(e -> {
+            if(txtPredio.getText().trim().isEmpty() && txtCedula.getText().trim().isEmpty()){
+                JOptionPane.showMessageDialog(this, "Debe ingresar el número de predio o la cédula del propietario.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            // Simulación de consulta: se llenan los campos con valores de ejemplo.
+            txtPropietario.setText("Luis Gómez");
+            txtDireccion.setText("Av. Central 123");
+            txtTipo.setText("Urbano");
+            txtAnio.setText("2025");
+            txtMonto.setText("120");
+        });
+        btnPagar.addActionListener(e -> {
+            try {
+                double valor = Double.parseDouble(txtMonto.getText().trim());
+                if (valor > saldoCaja)
+                    throw new IllegalArgumentException("Fondos insuficientes");
+                saldoCaja -= valor;
+                actualizarBilletesYMonedas(valor, false);
+                actualizarMontoActual();
+                JOptionPane.showMessageDialog(this, "Pago de impuesto predial realizado: $" + valor);
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Primero realice la consulta.", "Error", JOptionPane.ERROR_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        panel.add(new JLabel("N° de Predio:"));
+        panel.add(txtPredio);
+        panel.add(new JLabel("Cédula del Propietario:"));
+        panel.add(txtCedula);
+        panel.add(btnConsultar);
+        panel.add(new JLabel());
+        panel.add(new JLabel("Propietario:"));
+        panel.add(txtPropietario);
+        panel.add(new JLabel("Dirección:"));
+        panel.add(txtDireccion);
+        panel.add(new JLabel("Tipo (Urbano, Comercial, Residencial):"));
+        panel.add(txtTipo);
+        panel.add(new JLabel("Año a Pagar:"));
+        panel.add(txtAnio);
+        panel.add(new JLabel("Monto a Pagar ($):"));
+        panel.add(txtMonto);
+        panel.add(new JLabel());
+        panel.add(btnPagar);
+        return panel;
+    }
+    
+    // ---------- REPORTES ----------
+    /**
+     * Crea el reporte de cierre de caja.
+     * @return JPanel con el botón para generar el reporte de cierre de caja.
+     */
+    private JPanel crearReporteCierre() {
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        panel.setBorder(BorderFactory.createTitledBorder("Reporte de Cierre de Caja"));
+        JButton btnGenerar = new JButton("Generar Reporte en PDF");
+        btnGenerar.addActionListener(e -> generarReporteCierre());
+        panel.add(btnGenerar);
+        return panel;
+    }
+    
+    /**
+     * Crea el reporte de nómina.
+     * @return JPanel con el botón para generar el reporte de nómina.
+     */
+    private JPanel crearReporteNomina() {
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        panel.setBorder(BorderFactory.createTitledBorder("Reporte de Nómina"));
+        JButton btnGenerar = new JButton("Generar Reporte Nómina en PDF");
+        btnGenerar.addActionListener(e -> generarReporteNomina());
+        panel.add(btnGenerar);
+        return panel;
+    }
+    
+    /**
+     * Verifica que el saldo en caja no exceda de $1000.
+     */
+    private void verificarExcedenteCaja() {
+        if (saldoCaja > 1000) {
+            JOptionPane.showMessageDialog(this, 
+                "ADVERTENCIA: El saldo en caja excede los $1000. Realice un egreso.", 
+                "Excedente de Caja", JOptionPane.WARNING_MESSAGE);
+            realizarEgresoExcedente();
+        }
+    }
+
+    /**
+     * Realiza el egreso del excedente de caja.
+     */
+    private void realizarEgresoExcedente() {
+        double excedente = saldoCaja - 1000;
+        saldoCaja -= excedente;
+        actualizarBilletesYMonedas(excedente, false);
+        JOptionPane.showMessageDialog(this, "Egreso de excedente realizado: $" + excedente);
+        actualizarMontoActual();
+    }
+    
+    /**
+     * Maneja las acciones del menú horizontal del módulo transaccional.
+     * @param opcion Opción seleccionada del menú.
+     */
+    private void manejarMenuHorizontal(String opcion) {
+        if (opcion.equals("Salir")) {
+            int res = JOptionPane.showConfirmDialog(this, "¿Está seguro de salir al menú principal?", "Confirmar salida", JOptionPane.YES_NO_OPTION);
+            if (res == JOptionPane.YES_OPTION) {
+                ((CardLayout) mainPanel.getLayout()).show(mainPanel, MENU_INICIAL);
+            }
+        } else {
+            JOptionPane.showMessageDialog(this, "Seleccione una transacción desde el menú vertical.");
+        }
+    }
+    
+ /**
+  * Crea el panel del módulo de préstamos.
+  * @return JPanel con el módulo de préstamos.
+  */
+ private JPanel crearPanelPrestamos() {
+     JPanel panel = new JPanel(new BorderLayout());
+
+     JPanel menuPrestamos = new JPanel(new FlowLayout(FlowLayout.LEFT));
+     String[] opciones = {"Simular Préstamo", "Salir"};
+     for (String op : opciones) {
+         JButton btn = new JButton(op);
+         btn.addActionListener(e -> manejarMenuPrestamos(op));
+         menuPrestamos.add(btn);
+     }
+
+     prestamosCards = new JPanel(prestamosCardLayout);
+     prestamosCards.add(crearFormularioSimularPrestamo(), "Simular Préstamo");
+     prestamosCards.add(crearTablaAmortizacion(), "Tabla de Amortización");
+
+     panel.add(menuPrestamos, BorderLayout.NORTH);
+     panel.add(prestamosCards, BorderLayout.CENTER);
+     return panel;
+ }
+
+ /**
+  * Maneja las acciones del menú del módulo de préstamos.
+  * @param opcion Opción seleccionada del menú.
+  */
+ private void manejarMenuPrestamos(String opcion) {
+     if (opcion.equals("Salir")) {
+         int res = JOptionPane.showConfirmDialog(this, "¿Está seguro de salir al menú principal?", "Confirmar salida", JOptionPane.YES_NO_OPTION);
+         if (res == JOptionPane.YES_OPTION) {
+             ((CardLayout) mainPanel.getLayout()).show(mainPanel, MENU_INICIAL);
+         }
+     } else {
+         prestamosCardLayout.show(prestamosCards, opcion);
+     }
+ }
+
+ /**
+  * Crea el formulario para simular el préstamo.
+  * @return JPanel con el formulario para simular el préstamo.
+  */
+ private JPanel crearFormularioSimularPrestamo() {
+     JPanel panel = new JPanel(new BorderLayout());
+     panel.setBorder(BorderFactory.createTitledBorder("Simular Préstamo"));
+
+     JPanel formulario = new JPanel(new GridLayout(0, 2, 10, 10));
+     JTextField txtCapital = new JTextField();
+     JComboBox<String> tipoCredito = new JComboBox<>(new String[]{"Automotriz", "Hipotecario", "Emergente", "Consumo"});
+     JTextField txtTasaInteres = new JTextField("5.0%");
+     txtTasaInteres.setEditable(false);
+     JTextField txtPlazo = new JTextField();
+     JComboBox<String> metodoAmortizacion = new JComboBox<>(new String[]{"Alemán", "Francés"});
+     JButton btnCalcular = new JButton("Calcular Cuota");
+     JButton btnTablaAmortizacion = new JButton("Ver Tabla de Amortización");
+     JButton btnGenerarPDF = new JButton("Generar PDF");
+     JTextArea areaResultado = new JTextArea(12, 30);
+     areaResultado.setEditable(false);
+
+     tipoCredito.addActionListener(e -> {
+         String tipo = (String) tipoCredito.getSelectedItem();
+         double tasaAnual;
+         switch (tipo) {
+             case "Automotriz":
+                 tasaAnual = 5.0;
+                 break;
+             case "Hipotecario":
+                 tasaAnual = 3.5;
+                 break;
+             case "Emergente":
+                 tasaAnual = 7.0;
+                 break;
+             case "Consumo":
+                 tasaAnual = 4.5;
+                 break;
+             default:
+                 tasaAnual = 0.0;
+         }
+         txtTasaInteres.setText(tasaAnual + "%");
+     });
+
+     btnCalcular.addActionListener(e -> {
+         if (txtCapital.getText().trim().isEmpty() || txtPlazo.getText().trim().isEmpty()) {
+             JOptionPane.showMessageDialog(this, "Todos los campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+             return;
+         }
+         try {
+             double capital = Double.parseDouble(txtCapital.getText().trim());
+             int meses = Integer.parseInt(txtPlazo.getText().trim());
+             String metodo = (String) metodoAmortizacion.getSelectedItem();
+             double tasaAnual;
+
+             switch ((String) tipoCredito.getSelectedItem()) {
+                 case "Automotriz":
+                     tasaAnual = 5.0;
+                     break;
+                 case "Hipotecario":
+                     tasaAnual = 3.5;
+                     break;
+                 case "Emergente":
+                     tasaAnual = 7.0;
+                     break;
+                 case "Consumo":
+                     tasaAnual = 4.5;
+                     break;
+                 default:
+                     throw new IllegalArgumentException("Tipo de crédito no válido.");
+             }
+
+             if (capital <= 0 || meses <= 0) {
+                 throw new NumberFormatException("Los valores deben ser mayores a cero.");
+             }
+
+             double tasaMensual = tasaAnual / 100 / 12;
+             double cuota;
+             if (metodo.equals("Francés")) {
+                 cuota = (capital * tasaMensual) / (1 - Math.pow(1 + tasaMensual, -meses));
+             } else {
+                 cuota = capital / meses + (capital * tasaMensual);
+             }
+             areaResultado.setText("Cuota mensual: $" + String.format("%.2f", cuota) + "\n");
+         } catch (NumberFormatException ex) {
+             JOptionPane.showMessageDialog(this, "Datos inválidos: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+         }
+     });
+
+     btnTablaAmortizacion.addActionListener(e -> {
+         if (txtCapital.getText().trim().isEmpty() || txtPlazo.getText().trim().isEmpty()) {
+             JOptionPane.showMessageDialog(this, "Debe calcular la cuota antes de ver la tabla.", "Error", JOptionPane.ERROR_MESSAGE);
+             return;
+         }
+         try {
+             double capital = Double.parseDouble(txtCapital.getText().trim());
+             int meses = Integer.parseInt(txtPlazo.getText().trim());
+             String metodo = (String) metodoAmortizacion.getSelectedItem();
+             double tasaAnual;
+
+             switch ((String) tipoCredito.getSelectedItem()) {
+                 case "Automotriz":
+                     tasaAnual = 5.0;
+                     break;
+                 case "Hipotecario":
+                     tasaAnual = 3.5;
+                     break;
+                 case "Emergente":
+                     tasaAnual = 7.0;
+                     break;
+                 case "Consumo":
+                     tasaAnual = 4.5;
+                     break;
+                 default:
+                     throw new IllegalArgumentException("Tipo de crédito no válido.");
+             }
+
+             double tasaMensual = tasaAnual / 100 / 12;
+             double saldo = capital;
+             double cuota = metodo.equals("Francés") ? (capital * tasaMensual) / (1 - Math.pow(1 + tasaMensual, -meses)) : capital / meses + (capital * tasaMensual);
+
+             StringBuilder tabla = new StringBuilder();
+             tabla.append("Mes\tCuota\tInterés\tAmortización\tSaldo\n");
+
+             for (int i = 1; i <= meses; i++) {
+                 double interes = saldo * tasaMensual;
+                 double amortizacion;
+
+                 if (metodo.equals("Francés")) {
+                     amortizacion = cuota - interes;
+                 } else { // Método Alemán
+                     amortizacion = capital / meses;
+                     cuota = amortizacion + interes;
+                 }
+
+                 saldo -= amortizacion;
+                 tabla.append(i).append("\t")
+                     .append(String.format("%.2f", cuota)).append("\t")
+                     .append(String.format("%.2f", interes)).append("\t")
+                     .append(String.format("%.2f", amortizacion)).append("\t")
+                     .append(String.format("%.2f", Math.max(0, saldo))).append("\n");
+             }
+
+             areaResultado.append("\nTabla de Amortización (Método " + metodo + "):\n" + tabla);
+         } catch (NumberFormatException ex) {
+             JOptionPane.showMessageDialog(this, "Datos inválidos para la tabla de amortización.", "Error", JOptionPane.ERROR_MESSAGE);
+         }
+     });
+
+     btnGenerarPDF.addActionListener(e -> {
+         Document document = new Document();
+         try {
+             PdfWriter.getInstance(document, new FileOutputStream("TablaAmortizacion.pdf"));
+             document.open();
+             document.add(new Paragraph("Tabla de Amortización"));
+             document.add(new Paragraph(" "));
+
+             PdfPTable table = new PdfPTable(5);
+             table.addCell("Mes");
+             table.addCell("Cuota");
+             table.addCell("Interés");
+             table.addCell("Amortización");
+             table.addCell("Saldo");
+
+             String[] lines = areaResultado.getText().split("\n");
+             for (String line : lines) {
+                 if (line.startsWith("Mes")) continue;
+                 String[] cells = line.split("\t");
+                 for (String cell : cells) {
+                     table.addCell(cell);
+                 }
+             }
+
+             document.add(table);
+             document.close();
+             JOptionPane.showMessageDialog(this, "PDF generado exitosamente.", "Éxito", JOptionPane.INFORMATION_MESSAGE);
+         } catch (FileNotFoundException | DocumentException ex) {
+             JOptionPane.showMessageDialog(this, "Error al generar el PDF: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+         }
+     });
+
+     formulario.add(new JLabel("Monto del préstamo ($):"));
+     formulario.add(txtCapital);
+     formulario.add(new JLabel("Tipo de Crédito:"));
+     formulario.add(tipoCredito);
+     formulario.add(new JLabel("Tasa de interés (%):"));
+     formulario.add(txtTasaInteres);
+     formulario.add(new JLabel("Plazo (meses):"));
+     formulario.add(txtPlazo);
+     formulario.add(new JLabel("Método de Amortización:"));
+     formulario.add(metodoAmortizacion);
+     formulario.add(btnCalcular);
+     formulario.add(btnTablaAmortizacion);
+     formulario.add(btnGenerarPDF);
+
+     panel.add(formulario, BorderLayout.NORTH);
+     panel.add(new JScrollPane(areaResultado), BorderLayout.CENTER);
+     return panel;
+ }
+
+ /**
+  * Crea la tabla de amortización.
+  * @return JPanel con la tabla de amortización.
+  */
+ private JPanel crearTablaAmortizacion() {
+     JPanel panel = new JPanel();
+     panel.add(new JLabel("Tabla de Amortización"));
+     return panel;
+ }
+    
+    // REPORTES PDF
+    /**
+     * Genera el reporte de Cierre de Caja en PDF con marca de agua "DIDÁCTICO".
+     */
+private void generarReporteCierre() {
+    try {
+        // Configuración del documento PDF
+        Document doc = new Document(PageSize.A4);
+        PdfWriter writer = PdfWriter.getInstance(doc, new FileOutputStream("CierreCaja.pdf"));
+        doc.open();
+
+        // Marca de agua
+        PdfContentByte canvas = writer.getDirectContentUnder();
+        Font watermarkFont = new Font(Font.FontFamily.HELVETICA, 50, Font.BOLD, new BaseColor(200, 200, 200, 50));
+        Phrase watermark = new Phrase("DIDÁCTICO", watermarkFont);
+        ColumnText.showTextAligned(canvas, Element.ALIGN_CENTER, watermark, 297.5f, 421, 45); // Centrado en A4
+
+        // Título del reporte
+        Font tituloFont = new Font(Font.FontFamily.HELVETICA, 18, Font.BOLD, BaseColor.BLACK);
+        Paragraph titulo = new Paragraph("📊 Reporte de Cierre de Caja\n\n", tituloFont);
+        titulo.setAlignment(Element.ALIGN_CENTER);
+        doc.add(titulo);
+
+        // Fecha y hora actual
+        Font fechaFont = new Font(Font.FontFamily.HELVETICA, 12, Font.NORMAL, BaseColor.DARK_GRAY);
+        doc.add(new Paragraph("Fecha y hora: " + new Date(), fechaFont));
+        doc.add(new Paragraph("\n"));
+
+        // Información del cajero
+        Font infoFont = new Font(Font.FontFamily.HELVETICA, 12, Font.NORMAL, BaseColor.BLACK);
+        doc.add(new Paragraph("Código del Cajero: " + nominaDetails.get("codigo"), infoFont));
+        doc.add(new Paragraph("Nombre del Cajero: " + nominaDetails.get("nombre"), infoFont));
+        doc.add(new Paragraph("Horario del Cajero: " + nominaDetails.get("horario"), infoFont));
+        doc.add(new Paragraph("\n"));
+
+        // Detalle por institución financiera
+        PdfPTable tabla = new PdfPTable(3); // 3 columnas: Institución, Subtotal Documentos, Subtotal Efectivo
+        tabla.setWidthPercentage(100);
+        tabla.setSpacingBefore(10f);
+        tabla.setSpacingAfter(10f);
+        tabla.setHorizontalAlignment(Element.ALIGN_CENTER);
+
+        // Encabezados de la tabla
+        PdfPCell header1 = new PdfPCell(new Phrase("Institución", new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD)));
+        PdfPCell header2 = new PdfPCell(new Phrase("Subtotal Documentos", new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD)));
+        PdfPCell header3 = new PdfPCell(new Phrase("Subtotal Efectivo", new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD)));
+        header1.setBackgroundColor(BaseColor.LIGHT_GRAY);
+        header2.setBackgroundColor(BaseColor.LIGHT_GRAY);
+        header3.setBackgroundColor(BaseColor.LIGHT_GRAY);
+        header1.setHorizontalAlignment(Element.ALIGN_CENTER);
+        header2.setHorizontalAlignment(Element.ALIGN_CENTER);
+        header3.setHorizontalAlignment(Element.ALIGN_CENTER);
+        tabla.addCell(header1);
+        tabla.addCell(header2);
+        tabla.addCell(header3);
+
+        double totalDocumentos = 0;
+        double totalEfectivo = 0;
+
+        for (String institucion : instituciones.keySet()) {
+            double subtotalDocumentos = subtotalDocumentosPorInstitucion.getOrDefault(institucion, 0.0);
+            double subtotalEfectivo = subtotalEfectivoPorInstitucion.getOrDefault(institucion, 0.0);
+
+            // Add institution details to the table
+            tabla.addCell(institucion);
+            tabla.addCell(String.format("%.2f", subtotalDocumentos));
+            tabla.addCell(String.format("%.2f", subtotalEfectivo));
+
+            totalDocumentos += subtotalDocumentos;
+            totalEfectivo += subtotalEfectivo;
+        }
+
+        // Add totals to the table
+        tabla.addCell("Total");
+        tabla.addCell(String.format("%.2f", totalDocumentos));
+        tabla.addCell(String.format("%.2f", totalEfectivo));
+
+        doc.add(tabla);
+
+        // Cierre del documento
+        doc.close();
+
+        // Confirmación de éxito
+        JOptionPane.showMessageDialog(null, "✅ Reporte generado exitosamente: CierreCaja.pdf");
+    } catch (Exception ex) {
+        JOptionPane.showMessageDialog(null, "❌ Error generando reporte: " + ex.getMessage());
+    }
+}
+    
+    /**
+     * Genera el reporte de Nómina en PDF con marca de agua "DIDÁCTICO".
+     */
+private Map<String, String> nominaDetails = new HashMap<>();
+
+private void generarReporteNomina() {
+    try {
+        // Crear el documento y el escritor PDF
+        Document doc = new Document(PageSize.A4);
+        PdfWriter writer = PdfWriter.getInstance(doc, new FileOutputStream("ReporteNomina.pdf"));
+        doc.open();
+
+        // Agregar marca de agua
+        PdfContentByte canvas = writer.getDirectContentUnder();
+        Font watermarkFont = new Font(Font.FontFamily.HELVETICA, 50, Font.BOLD, new BaseColor(200, 200, 200, 50));
+        Phrase watermark = new Phrase("DIDÁCTICO", watermarkFont);
+        ColumnText.showTextAligned(canvas, Element.ALIGN_CENTER, watermark, 297.5f, 421, 45); // Centrado en A4
+
+        // Título del reporte
+        Font tituloFont = new Font(Font.FontFamily.HELVETICA, 18, Font.BOLD, BaseColor.BLACK);
+        Paragraph titulo = new Paragraph("Reporte de Nómina\n\n", tituloFont);
+        titulo.setAlignment(Element.ALIGN_CENTER);
+        doc.add(titulo);
+
+        // Fecha del reporte
+        Font fechaFont = new Font(Font.FontFamily.HELVETICA, 12, Font.NORMAL, BaseColor.DARK_GRAY);
+        doc.add(new Paragraph("Fecha de generación: " + new Date(), fechaFont));
+        doc.add(new Paragraph("\n"));
+
+        // Detalle de denominaciones (Tabla)
+        PdfPTable tabla = new PdfPTable(2); // 2 columnas
+        tabla.setWidthPercentage(80);
+        tabla.setSpacingBefore(10f);
+        tabla.setSpacingAfter(10f);
+        tabla.setHorizontalAlignment(Element.ALIGN_CENTER);
+
+        // Encabezados de la tabla
+        PdfPCell header1 = new PdfPCell(new Phrase("Denominación", new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD)));
+        PdfPCell header2 = new PdfPCell(new Phrase("Cantidad", new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD)));
+        header1.setBackgroundColor(BaseColor.LIGHT_GRAY);
+        header2.setBackgroundColor(BaseColor.LIGHT_GRAY);
+        header1.setHorizontalAlignment(Element.ALIGN_CENTER);
+        header2.setHorizontalAlignment(Element.ALIGN_CENTER);
+        tabla.addCell(header1);
+        tabla.addCell(header2);
+
+        // Datos de nómina
+        tabla.addCell("Código de Cajero");
+        tabla.addCell(nominaDetails.get("codigo"));
+        tabla.addCell("Nombre de Cajero");
+        tabla.addCell(nominaDetails.get("nombre"));
+        tabla.addCell("Horario");
+        tabla.addCell(nominaDetails.get("horario"));
+        tabla.addCell("Billetes y monedas");
+        tabla.addCell(nominaDetails.get("billetes").replace("\t", " | "));
+
+        // Agregar tabla al documento
+        doc.add(tabla);
+
+        // Cierre del documento
+        doc.close();
+
+        // Confirmación de éxito
+        JOptionPane.showMessageDialog(null, "✅ Reporte generado exitosamente: ReporteNomina.pdf");
+    } catch (Exception ex) {
+        JOptionPane.showMessageDialog(null, "❌ Error generando reporte: " + ex.getMessage());
+    }
+}
+
+
+    // INICIALIZACIÓN DE INSTITUCIONES FINANCIERAS
+  
+    /**
+     * Inicializa las instituciones financieras y sus transacciones permitidas.
+     */
+    private void inicializarInstituciones() {
+        instituciones.clear();
+        
+        // Banco de los Andes
+        instituciones.put("Banco de los Andes", new HashSet<>(Arrays.asList(
+            "Ingreso Caja", "Egreso Caja", "Nómina",
+            "Pago Cheques", "Actualización Libretas", "Retiro con Libreta", 
+            "Pago Giros",
+            "Depósito Efectivo", "Depósito Cheques", "Depósito Mixto",
+            "Pago Revisión Vehicular", "Pago Matriculación Vehicular", "Pago Impuesto Predial",
+            "Cierre de Caja", "Reporte Nómina"
+        )));
+        // Banco Continental
+        instituciones.put("Banco Continental", new HashSet<>(Arrays.asList(
+            "Ingreso Caja", "Egreso Caja", "Nómina",
+            "Pago Cheques", "Actualización Libretas", "Retiro con Libreta", "Retiro sin Libreta", "Pago Giros",
+            "Depósito Efectivo", "Depósito Cheques", "Depósito Mixto",
+            "Pago Planilla EEQ",
+            "Cierre de Caja", "Reporte Nómina"
+        )));
+        // Banco del Progreso
+        instituciones.put("Banco del Progreso", new HashSet<>(Arrays.asList(
+            "Ingreso Caja", "Egreso Caja", "Nómina",
+            "Pago Cheques", "Actualización Libretas", "Retiro con Libreta", "Retiro sin Libreta",
+            "Depósito Efectivo", "Depósito Cheques", "Depósito Mixto",
+            "Pago Revisión Vehicular", "Pago Matriculación Vehicular", "Pago Planilla EEQ",
+            "Cierre de Caja", "Reporte Nómina"
+        )));
+        // Banco La Previsora
+        instituciones.put("Banco La Previsora", new HashSet<>(Arrays.asList(
+            "Ingreso Caja", "Egreso Caja", "Nómina",
+            "Pago Cheques", "Actualización Libretas", "Retiro con Libreta", "Retiro sin Libreta", "Pago Giros",
+            "Depósito Efectivo", "Depósito Cheques", "Depósito Mixto",
+            "Pago Planilla EEQ", "Pago Impuesto Predial",
+            "Cierre de Caja", "Reporte Nómina"
+        )));
+        // Mutualista Benalcázar
+        instituciones.put("Mutualista Benalcázar", new HashSet<>(Arrays.asList(
+            "Ingreso Caja", "Nómina",
+            "Pago Cheques", "Actualización Libretas", "Retiro con Libreta", "Pago Giros",
+            "Depósito Cheques",
+            "Pago Revisión Vehicular", "Pago Matriculación Vehicular", "Pago Impuesto Predial",
+            "Cierre de Caja", "Reporte Nómina"
+        )));
+        // Mutualista Sol Naciente
+        instituciones.put("Mutualista Sol Naciente", new HashSet<>(Arrays.asList(
+            "Ingreso Caja", "Nómina",
+            "Actualización Libretas", "Retiro con Libreta",
+            "Depósito Efectivo",
+            "Pago Planilla EEQ",
+            "Cierre de Caja", "Reporte Nómina"
+        )));
+        // Cooperativa Unión Solidaria
+        instituciones.put("Cooperativa Unión Solidaria", new HashSet<>(Arrays.asList(
+            "Ingreso Caja", "Egreso Caja", "Nómina",
+            "Pago Cheques", "Actualización Libretas", "Retiro con Libreta",
+            "Depósito Efectivo", "Depósito Cheques",
+            "Pago Revisión Vehicular", "Pago Matriculación Vehicular", "Pago Impuesto Predial",
+            "Cierre de Caja", "Reporte Nómina"
+        )));
+        // Cooperativa Agrícola Ganadera
+        instituciones.put("Cooperativa Agrícola Ganadera", new HashSet<>(Arrays.asList(
+            "Ingreso Caja", "Nómina",
+            "Depósito Efectivo", "Actualización Libretas", "Retiro con Libreta", "Pago Giros",
+            "Depósito Cheques",
+            "Pago Planilla EEQ",
+            "Cierre de Caja", "Reporte Nómina"
+        )));
+        // Cooperativa 20 de Julio
+        instituciones.put("Cooperativa 20 de Julio", new HashSet<>(Arrays.asList(
+            "Ingreso Caja", "Nómina",
+            "Depósito Efectivo", "Actualización Libretas", "Retiro con Libreta", 
+            "Pago Impuesto Predial",
+            "Cierre de Caja", "Reporte Nómina"
+        )));
+    }
+    
+    /**
+     * Actualiza el monto actual en el campo de texto correspondiente.
+     */
+    private void actualizarMontoActual() {
+        txtMontoActual.setText(String.format("%.2f", saldoCaja));
+    }
+    
+    /**
+     * Inicializa los billetes y monedas con valores iniciales.
+     */
+    private void inicializarBilletesYMonedas() {
+        billetes.put("100", 0);
+        billetes.put("50", 0);
+        billetes.put("20", 0);
+        billetes.put("10", 0);
+        billetes.put("5", 0);
+        billetes.put("1", 0);
+        monedas.put("0.50", 0);
+        monedas.put("0.25", 0);
+        monedas.put("0.10", 0);
+        monedas.put("0.05", 0);
+        monedas.put("0.01", 0);
+    }
+
+    /**
+     * Actualiza la cantidad de billetes y monedas.
+     * @param monto Monto a actualizar.
+     * @param esDeposito Indica si es un depósito (true) o un retiro (false).
+     */
+    private void actualizarBilletesYMonedas(double monto, boolean esDeposito) {
+        int factor = esDeposito ? 1 : -1;
+        int billetes100 = (int) (monto / 100);
+        billetes.put("100", billetes.get("100") + billetes100 * factor);
+        monto %= 100;
+        int billetes50 = (int) (monto / 50);
+        billetes.put("50", billetes.get("50") + billetes50 * factor);
+        monto %= 50;
+        int billetes20 = (int) (monto / 20);
+        billetes.put("20", billetes.get("20") + billetes20 * factor);
+        monto %= 20;
+        int billetes10 = (int) (monto / 10);
+        billetes.put("10", billetes.get("10") + billetes10 * factor);
+        monto %= 10;
+        int billetes5 = (int) (monto / 5);
+        billetes.put("5", billetes.get("5") + billetes5 * factor);
+        monto %= 5;
+        int billetes1 = (int) (monto / 1);
+        billetes.put("1", billetes.get("1") + billetes1 * factor);
+        monto %= 1;
+
+        int monedas50c = (int) (monto / 0.50);
+        monedas.put("0.50", monedas.get("0.50") + monedas50c * factor);
+        monto %= 0.50;
+        int monedas25c = (int) (monto / 0.25);
+        monedas.put("0.25", monedas.get("0.25") + monedas25c * factor);
+        monto %= 0.25;
+        int monedas10c = (int) (monto / 0.10);
+        monedas.put("0.10", monedas.get("0.10") + monedas10c * factor);
+        monto %= 0.10;
+        int monedas5c = (int) (monto / 0.05);
+        monedas.put("0.05", monedas.get("0.05") + monedas5c * factor);
+        monto %= 0.05;
+        int monedas1c = (int) (monto / 0.01);
+        monedas.put("0.01", monedas.get("0.01") + monedas1c * factor);
+    }
+    
+    // MAIN
+ 
+    /**
+     * Método principal para ejecutar la aplicación.
+     * @param args Argumentos de la línea de comandos.
+     */
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            AplicacionDemo app = new AplicacionDemo();
+            app.setVisible(true);
+        });
+    }
+}
+
